@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ocr-api
+  namespace: ocr-service
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"  # max upload (REQ-ING-04)
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["api.ocr.example.com"]
+      secretName: ocr-tls
+  rules:
+    - host: api.ocr.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ocr-api
+                port: { number: 80 }

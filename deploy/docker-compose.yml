@@ -1,0 +1,117 @@
+# Dev stack: Postgres 16 + Qdrant + API + worker.
+# `make up` builds and starts everything. The `migrate` one-shot service runs
+# Alembic to head before API/worker start (they depend on it completing).
+
+name: ocr-service
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ocr
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ocr"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrantdata:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
+    environment:
+      OCR_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/ocr
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      OCR_ENV: dev
+      OCR_DATABASE_URL: postgresql+asyncpg://ocr_app:changeme_in_production@postgres:5432/ocr
+      OCR_QDRANT_URL: http://qdrant:6333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "app.worker"]
+    environment:
+      OCR_ENV: dev
+      OCR_DATABASE_URL: postgresql+asyncpg://ocr_app:changeme_in_production@postgres:5432/ocr
+      OCR_QDRANT_URL: http://qdrant:6333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Lint + type-check + unit/integration tests against the real Postgres.
+  # Behind the `test` profile so it never starts on `make up`.
+  #   docker compose -f deploy/docker-compose.yml --profile test run --rm test
+  test:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: test
+    profiles: ["test"]
+    environment:
+      OCR_ENV: dev
+      OCR_DATABASE_URL: postgresql+asyncpg://ocr_app:changeme_in_production@postgres:5432/ocr
+      OCR_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/ocr
+      OCR_QDRANT_URL: http://qdrant:6333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        ruff check app tests
+        ruff format --check app tests
+        mypy app
+        pytest -ra --cov=app --cov-report=term-missing
+
+volumes:
+  pgdata:
+  qdrantdata:

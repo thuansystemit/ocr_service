@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ocr-config
+  namespace: ocr-service
+data:
+  OCR_ENV: "prod"
+  OCR_LOG_LEVEL: "INFO"
+  OCR_LOG_JSON: "true"
+  OCR_API_PORT: "8000"
+  OCR_QDRANT_URL: "http://qdrant:6333"
+  OCR_QDRANT_COLLECTION: "ocr_few_shot"
+  OCR_EMBEDDING_DIM: "1536"
+  OCR_LLM_PRIMARY_MODEL: "claude-sonnet-4-6"
+  OCR_LLM_FALLBACK_MODEL: "gpt-4o"
+  OCR_WORKER_DEFAULT_CONCURRENCY: "10"

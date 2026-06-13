@@ -30,6 +30,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("db_available")]
 
 PDF_MIME = "application/pdf"
 
+# Long, clean body so the text-quality guardrail PASSes (no WARN penalty) and the
+# fake high-confidence extraction can straight-through-process to "completed".
+_GOOD_TEXT = (
+    "Invoice number 12345 issued by Acme Corporation to Beta Industries for "
+    "professional consulting services rendered during the billing period with "
+    "subtotal taxes and a total amount due of one hundred dollars net thirty days"
+)
+
 
 class _FakeChain:
     """Stand-in extraction chain so the pipeline runs without a live LLM."""
@@ -104,7 +112,7 @@ async def test_extract_happy_path_completes() -> None:
             resp = await c.post(
                 "/api/v1/extract",
                 headers=headers,
-                files={"file": ("invoice.pdf", make_text_pdf("Invoice 42 Total 100.00"), PDF_MIME)},
+                files={"file": ("invoice.pdf", make_text_pdf(_GOOD_TEXT), PDF_MIME)},
                 data={"schema_name": "invoice"},
             )
             assert resp.status_code == 202, resp.text

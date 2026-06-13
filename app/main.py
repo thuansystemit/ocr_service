@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 
 from app import __version__
-from app.api.routers import extract, health, me, review, schemas
+from app.api.routers import audit, dlq, extract, health, me, review, schemas
 from app.config import get_settings
 from app.db.session import dispose_engine
 from app.observability.logging import configure_logging, get_logger
@@ -47,6 +47,8 @@ def create_app() -> FastAPI:
     app.include_router(schemas.router)
     app.include_router(extract.router)
     app.include_router(review.router)
+    app.include_router(dlq.router)
+    app.include_router(audit.router)
     # Routers/middleware for later sprints register here.
     _ = settings  # reserved for CORS / rate-limit config wiring
     return app

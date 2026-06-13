@@ -13,10 +13,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
+from app.api.context import get_current_tenant
 from app.api.dependencies import get_session
-from app.api.schemas.document import ExtractionResultResponse, ReviewTaskResponse
+from app.api.schemas.document import (
+    ExtractionResultResponse,
+    ReviewActionRequest,
+    ReviewTaskResponse,
+)
 from app.db.models import ExtractionResult, ReviewTask
+from app.services import review as review_svc
 
 router = APIRouter(prefix="/api/v1/review", tags=["review"])
 
@@ -52,3 +59,32 @@ async def get_review(
             else None
         ),
     }
+
+
+@router.post("/{review_id}", response_model=ReviewTaskResponse)
+async def act_on_review(
+    review_id: UUID,
+    payload: ReviewActionRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ReviewTaskResponse:
+    tenant = get_current_tenant()
+    if tenant is None:  # pragma: no cover - get_session always sets it
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "no tenant context")
+    try:
+        review = await review_svc.apply_action(
+            session,
+            review_id,
+            tenant_id=UUID(tenant),
+            action=payload.action,
+            expected_version=payload.version,
+            corrections=payload.corrections,
+            rejection_reason=payload.rejection_reason,
+        )
+    except review_svc.ReviewNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except review_svc.InvalidReviewActionError as exc:
+        # version mismatch / bad action -> 409 conflict (optimistic lock, REQ-019)
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except StaleDataError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, "review was modified concurrently") from exc
+    return ReviewTaskResponse.model_validate(review)

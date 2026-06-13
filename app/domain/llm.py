@@ -11,11 +11,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from app.config import get_settings
+from app.domain.circuit_breaker import CircuitBreaker
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 _model: BaseChatModel | None = None
+_fallback: BaseChatModel | None = None
+_breaker = CircuitBreaker(name="llm-primary")
 
 
 def get_chat_model() -> BaseChatModel:
@@ -26,6 +29,20 @@ def get_chat_model() -> BaseChatModel:
         settings = get_settings()
         _model = ChatAnthropic(model=settings.llm_primary_model, temperature=0)
     return _model
+
+
+def get_fallback_chat_model() -> BaseChatModel:
+    global _fallback
+    if _fallback is None:
+        from langchain_openai import ChatOpenAI
+
+        settings = get_settings()
+        _fallback = ChatOpenAI(model=settings.llm_fallback_model, temperature=0)
+    return _fallback
+
+
+def get_llm_breaker() -> CircuitBreaker:
+    return _breaker
 
 
 def set_chat_model(model: BaseChatModel | None) -> None:

@@ -14,14 +14,24 @@ from typing import cast
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import DeadLetter, Document, ExtractionResult, ReviewTask, Schema
+from app.db.models import (
+    DeadLetter,
+    Document,
+    ExtractionResult,
+    GuardrailReport,
+    ReviewTask,
+    Schema,
+)
 from app.db.session import tenant_session
 from app.observability.logging import bind_context, get_logger
 from app.pipeline.checkpoint import checkpointed_graph
 from app.pipeline.state import ExtractionState
+from app.services import audit
 from app.services.rate_limit import get_rate_limiter
+from app.worker import cancellation
 from app.worker.pool import get_worker_pool
 
 log = get_logger(__name__)
@@ -62,9 +72,47 @@ async def _process(document_id: UUID, tenant_id: UUID) -> None:
         final = cast(ExtractionState, await graph.ainvoke(initial, config))
 
     await _persist_outcome(document_id, tenant_id, final)
+    if final.get("status") == "completed":
+        _schedule_webhook(document_id, tenant_id)
     log.info(
         "pipeline.completed", status=final.get("status"), routing=final.get("routing_decision")
     )
+
+
+def _schedule_webhook(document_id: UUID, tenant_id: UUID) -> None:
+    task = asyncio.create_task(_deliver_webhook(document_id, tenant_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _deliver_webhook(document_id: UUID, tenant_id: UUID) -> None:
+    from app.db.models import Tenant
+    from app.services.webhook_delivery import WebhookDeliverer
+
+    async with tenant_session(tenant_id) as session:
+        document = await session.get(Document, document_id)
+        tenant = await session.get(Tenant, tenant_id)
+        if document is None or tenant is None or not tenant.webhook_url:
+            return  # nothing to deliver to
+        extraction = (
+            await session.execute(
+                select(ExtractionResult).where(ExtractionResult.document_id == document_id)
+            )
+        ).scalar_one_or_none()
+        payload = {
+            "document_id": str(document_id),
+            "status": document.status,
+            "routing_decision": document.routing_decision,
+            "extracted_json": extraction.extracted_json if extraction else None,
+        }
+        await WebhookDeliverer().deliver(
+            session,
+            tenant_id=tenant_id,
+            document_id=document_id,
+            webhook_url=tenant.webhook_url,
+            webhook_secret=tenant.webhook_secret,
+            payload=payload,
+        )
 
 
 async def _load_initial_state(document_id: UUID, tenant_id: UUID) -> ExtractionState | None:
@@ -98,10 +146,27 @@ async def _persist_outcome(document_id: UUID, tenant_id: UUID, state: Extraction
         document = await session.get(Document, document_id)
         if document is None:
             return
+        # GDPR guard (D-SP003-1): if erasure cancelled this document mid-flight,
+        # do not write rows that would re-create PII.
+        if document.status in ("cancelled", "tombstone") or cancellation.is_cancelled(document_id):
+            log.info("pipeline.persist_skipped_cancelled", document_id=str(document_id))
+            return
         document.status = final_status if final_status in _TERMINAL else "error"
         document.routing_decision = state.get("routing_decision")
         if confidence is not None:
             document.confidence_overall = confidence
+
+        for report in state.get("guardrail_results", []):
+            session.add(
+                GuardrailReport(
+                    document_id=document_id,
+                    tenant_id=tenant_id,
+                    guardrail_name=str(report.get("name", "unknown")),
+                    result=str(report.get("result", "pass")),
+                    detail=report.get("detail"),
+                    confidence_multiplier=report.get("confidence_multiplier", 1.0),
+                )
+            )
 
         if final_status in ("completed", "review"):
             await _write_extraction_result(session, document_id, tenant_id, state, final_status)
@@ -115,6 +180,17 @@ async def _persist_outcome(document_id: UUID, tenant_id: UUID, state: Extraction
                     status="pending",
                 )
             )
+
+        await audit.append_event(
+            session,
+            tenant_id=tenant_id,
+            document_id=document_id,
+            event_type=f"PIPELINE_{document.status.upper()}",
+            actor="system:pipeline",
+            status=document.status,
+            payload=state.get("extracted_json"),
+            metadata={"routing_decision": state.get("routing_decision")},
+        )
 
 
 async def _write_extraction_result(

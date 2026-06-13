@@ -7,7 +7,7 @@ which keeps nodes unit-testable and side-effect-light.
 
 Sprint status of each node:
 * parse     -- real (local parser; LlamaParse cloud via parser backend, T-038)
-* guardrail -- minimal (empty/quality); full guardrails in Sprint 5
+* guardrail -- real: injection (BLOCK) + text-quality (WARN), aggregated (T-046/047/048)
 * extract   -- real: Qdrant RAG few-shot + LangChain structured extraction (T-040/041)
 * score     -- real: min(llm, completeness, semantic) x guardrail_mult (T-051)
 * route     -- real threshold routing (HIGH/MEDIUM/LOW)
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 from app.observability.logging import get_logger
 from app.pipeline.parsers import get_parser
-from app.pipeline.parsers.base import ParserError
 from app.pipeline.state import ExtractionState
 
 log = get_logger(__name__)
@@ -38,10 +37,10 @@ async def parse_node(state: ExtractionState) -> ExtractionState:
     # Lazy import avoids a hard storage dependency at module import time.
     from app.domain.storage import get_storage
 
-    content = await get_storage().load(state["file_storage_key"])
     try:
+        content = await get_storage().load(state["file_storage_key"])
         result = await get_parser().parse(content)
-    except ParserError as exc:
+    except Exception as exc:
         log.warning("pipeline.parse.failed", document_id=state.get("document_id"), error=str(exc))
         return {"status": "error", "failure_reason": "PARSE_FAILED", "error": str(exc)}
 
@@ -64,10 +63,26 @@ async def parse_node(state: ExtractionState) -> ExtractionState:
 async def guardrail_node(state: ExtractionState) -> ExtractionState:
     if _halted(state):
         return {}
-    # Sprint 5 adds injection/quality/length guards. Sprint 3: pass-through.
+    from app.domain.guardrails import aggregate_multiplier, has_block, run_guardrails
+
+    outcomes = run_guardrails(state.get("raw_text", ""))
+    reports = [o.as_state() for o in outcomes]
+
+    if has_block(outcomes):
+        blocked = next(o for o in outcomes if o.result.value == "block")
+        reason = "INJECTION_DETECTED" if blocked.name == "injection" else "GUARDRAIL_BLOCK"
+        log.warning("pipeline.guardrail.block", guard=blocked.name, detail=blocked.detail)
+        return {
+            "guardrail_results": reports,
+            "status": "error",
+            "failure_reason": reason,
+            "error": blocked.detail or "guardrail blocked",
+            "current_step": "guardrail",
+        }
+
     return {
-        "guardrail_results": [],
-        "guardrail_multiplier": 1.0,
+        "guardrail_results": reports,
+        "guardrail_multiplier": aggregate_multiplier(outcomes),
         "current_step": "guardrail",
         "status": "extracting",
     }
@@ -156,7 +171,8 @@ async def route_node(state: ExtractionState) -> ExtractionState:
 
 
 async def deliver_node(state: ExtractionState) -> ExtractionState:
-    # Sprint 5: HMAC-signed webhook with retry. Sprint 3: mark completed.
+    # Marks the document completed; the signed-webhook delivery (with retry +
+    # exhaustion->DLQ) is fired by the runner for completed docs (T-056/057).
     return {"status": "completed", "current_step": "deliver"}
 
 

@@ -8,7 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_session
-from app.api.schemas.schema_registry import CreateSchemaRequest, SchemaResponse
+from app.api.schemas.schema_registry import (
+    CreateSchemaRequest,
+    SchemaResponse,
+    SeedExampleRequest,
+)
 from app.services import schema_registry as svc
 
 router = APIRouter(prefix="/api/v1/schemas", tags=["schemas"])
@@ -54,6 +58,38 @@ async def update_schema(
         schema = await svc.update_schema(session, schema_id, payload)
     except svc.SchemaNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return SchemaResponse.model_validate(schema)
+
+
+@router.post("/{schema_id}/seeds", response_model=SchemaResponse)
+async def add_seed(
+    schema_id: UUID,
+    payload: SeedExampleRequest,
+    session: AsyncSession = Depends(get_session),
+) -> SchemaResponse:
+    try:
+        schema = await svc.add_seed_example(
+            session,
+            schema_id,
+            tenant_id=_tenant(),
+            input_text=payload.input_text,
+            expected_json=payload.expected_json,
+        )
+    except svc.SchemaNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return SchemaResponse.model_validate(schema)
+
+
+@router.post("/{schema_id}/activate", response_model=SchemaResponse)
+async def activate_schema(
+    schema_id: UUID, session: AsyncSession = Depends(get_session)
+) -> SchemaResponse:
+    try:
+        schema = await svc.activate_schema(session, schema_id)
+    except svc.SchemaNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except svc.ActivationError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return SchemaResponse.model_validate(schema)
 
 

@@ -42,6 +42,11 @@ class UpdateSchemaStatusRequest(BaseModel):
     status: SchemaStatus
 
 
+class SeedExampleRequest(BaseModel):
+    input_text: str = Field(..., min_length=1)
+    expected_json: dict[str, Any] = Field(default_factory=dict)
+
+
 class SchemaResponse(SchemaBase):
     model_config = ConfigDict(from_attributes=True)
 

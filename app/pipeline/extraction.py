@@ -35,12 +35,23 @@ class ExtractionChain:
     def __init__(self, model: Any | None = None) -> None:
         self._model = model
 
-    def _resolve_model(self) -> Any:
+    async def _invoke(self, prompt: str) -> Any:
+        # Injected model (tests): use directly, no breaker/fallback.
         if self._model is not None:
-            return self._model
-        from app.domain.llm import get_chat_model
+            return await self._model.with_structured_output(LLMExtraction).ainvoke(prompt)
 
-        return get_chat_model()
+        # Production: primary (Claude) under a circuit breaker, GPT-4o fallback (T-062).
+        from app.domain.llm import get_chat_model, get_fallback_chat_model, get_llm_breaker
+
+        async def _primary() -> Any:
+            return await get_chat_model().with_structured_output(LLMExtraction).ainvoke(prompt)
+
+        try:
+            return await get_llm_breaker().call(_primary)
+        except Exception as exc:
+            log.warning("extraction.fallback_to_secondary", error=str(exc))
+            fallback = get_fallback_chat_model().with_structured_output(LLMExtraction)
+            return await fallback.ainvoke(prompt)
 
     async def extract(
         self,
@@ -60,8 +71,7 @@ class ExtractionChain:
             required_fields=required_fields,
             examples=examples,
         )
-        structured = self._resolve_model().with_structured_output(LLMExtraction)
-        result = await structured.ainvoke(prompt)
+        result = await self._invoke(prompt)
         if not isinstance(result, LLMExtraction):  # some providers return a dict
             result = LLMExtraction.model_validate(result)
         log.info(

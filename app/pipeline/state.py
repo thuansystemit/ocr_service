@@ -18,13 +18,6 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 
-class GuardrailOutcome(TypedDict):
-    name: str
-    result: str  # "pass" | "warn" | "block"
-    detail: str | None
-    confidence_multiplier: float
-
-
 class ExtractionState(TypedDict, total=False):
     # --- Identity (immutable after START) ---
     document_id: str
@@ -53,8 +46,8 @@ class ExtractionState(TypedDict, total=False):
     raw_text: str
     parse_method: str  # "llamaparse" | "fallback"
 
-    # --- Guardrails ---
-    guardrail_results: list[GuardrailOutcome]
+    # --- Guardrails (each entry is GuardrailOutcome.as_state(): name/result/detail/multiplier) ---
+    guardrail_results: list[dict[str, Any]]
     guardrail_multiplier: float
 
     # --- Extraction ---

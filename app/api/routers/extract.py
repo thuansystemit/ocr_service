@@ -122,3 +122,20 @@ async def get_document(
     detail.guardrail_reports = [GuardrailReportResponse.model_validate(g) for g in guardrails]
     detail.review_task = ReviewTaskResponse.model_validate(review) if review else None
     return detail
+
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_202_ACCEPTED)
+async def erase_document(
+    document_id: UUID,
+    auth: AuthContext = Depends(require_auth),
+) -> dict[str, str]:
+    """GDPR erasure (REQ-039/041): cancel any in-flight run and hard-delete the
+    document, its derived data, blobs, and vectors, leaving only a tombstone."""
+    from app.services.erasure import DocumentNotFoundError
+    from app.services.erasure import erase_document as do_erase
+
+    try:
+        await do_erase(document_id, auth.tenant_id)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found") from exc
+    return {"document_id": str(document_id), "status": "erased"}

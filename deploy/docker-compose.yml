@@ -38,6 +38,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      target: runtime
     command: ["alembic", "-c", "migrations/alembic.ini", "upgrade", "head"]
     environment:
       OCR_MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/ocr
@@ -50,12 +51,20 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      target: runtime
     ports:
       - "8000:8000"
     environment:
       OCR_ENV: dev
       OCR_DATABASE_URL: postgresql+asyncpg://ocr_app:changeme_in_production@postgres:5432/ocr
       OCR_QDRANT_URL: http://qdrant:6333
+      # Optional provider keys: export them on the host before `up` to enable
+      # real LLM extraction / cloud parsing. Empty = local/degraded behaviour.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLAMA_CLOUD_API_KEY: ${LLAMA_CLOUD_API_KEY:-}
+      OCR_PARSER_BACKEND: ${OCR_PARSER_BACKEND:-local}
+      OCR_PII_ENCRYPTION_KEY: ${OCR_PII_ENCRYPTION_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,11 +77,17 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      target: runtime
     command: ["python", "-m", "app.worker"]
     environment:
       OCR_ENV: dev
       OCR_DATABASE_URL: postgresql+asyncpg://ocr_app:changeme_in_production@postgres:5432/ocr
       OCR_QDRANT_URL: http://qdrant:6333
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLAMA_CLOUD_API_KEY: ${LLAMA_CLOUD_API_KEY:-}
+      OCR_PARSER_BACKEND: ${OCR_PARSER_BACKEND:-local}
+      OCR_PII_ENCRYPTION_KEY: ${OCR_PII_ENCRYPTION_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

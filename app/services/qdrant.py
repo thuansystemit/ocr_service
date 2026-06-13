@@ -70,6 +70,34 @@ class QdrantService:
         point = models.PointStruct(id=str(uuid.uuid4()), vector=vector, payload=full_payload)
         await self._ensure_client().upsert(collection_name=self._collection, points=[point])
 
+    async def delete_by_document(
+        self, *, tenant_id: uuid.UUID | str, document_id: uuid.UUID | str
+    ) -> None:
+        """Delete all vectors for a document (GDPR erasure / retention).
+
+        Filtered by both tenant_id and document_id so a wrong document_id can
+        never delete another tenant's vectors.
+        """
+        if not tenant_id:
+            raise TenantFilterMissingError("tenant_id is required to delete vectors")
+        from qdrant_client import models
+
+        await self._ensure_client().delete(
+            collection_name=self._collection,
+            points_selector=models.FilterSelector(
+                filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="tenant_id", match=models.MatchValue(value=str(tenant_id))
+                        ),
+                        models.FieldCondition(
+                            key="document_id", match=models.MatchValue(value=str(document_id))
+                        ),
+                    ]
+                )
+            ),
+        )
+
     async def search(
         self,
         *,

@@ -35,13 +35,37 @@ class OpenAIEmbedder:
         return list(resp.data[0].embedding)
 
 
+class OllamaEmbedder:
+    """Embeddings from a local/self-hosted Ollama instance (``OCR_OLLAMA_BASE_URL``)."""
+
+    def __init__(self, model: str, base_url: str) -> None:
+        self._model = model
+        self._base_url = base_url
+        self._client: object | None = None
+
+    def _ensure_client(self) -> object:
+        if self._client is None:
+            from langchain_ollama import OllamaEmbeddings
+
+            self._client = OllamaEmbeddings(model=self._model, base_url=self._base_url)
+        return self._client
+
+    async def embed(self, text: str) -> list[float]:
+        client = self._ensure_client()
+        return await client.aembed_query(text)  # type: ignore[attr-defined]
+
+
 _embedder: Embedder | None = None
 
 
 def get_embedder() -> Embedder:
     global _embedder
     if _embedder is None:
-        _embedder = OpenAIEmbedder()
+        settings = get_settings()
+        if settings.embedding_provider == "ollama":
+            _embedder = OllamaEmbedder(settings.ollama_embedding_model, settings.ollama_base_url)
+        else:
+            _embedder = OpenAIEmbedder()
     return _embedder
 
 

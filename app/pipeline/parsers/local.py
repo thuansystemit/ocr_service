@@ -14,7 +14,7 @@ import io
 import pdfplumber
 
 from app.observability.logging import get_logger
-from app.pipeline.parsers.base import ParserError, ParseResult
+from app.pipeline.parsers.base import ParserError, ParseResult, clean_text
 
 log = get_logger(__name__)
 
@@ -49,7 +49,7 @@ class LocalParser:
         except Exception as exc:  # malformed PDF, unsupported, etc.
             raise ParserError(f"local parse failed: {exc}") from exc
 
-        result = ParseResult(text=text, method="local", page_count=page_count)
+        result = ParseResult(text=clean_text(text), method="local", page_count=page_count)
         if not result.is_empty:
             return result
 
@@ -59,4 +59,4 @@ class LocalParser:
             ocr_text, ocr_pages = await asyncio.to_thread(_ocr_pdf, content)
         except Exception as exc:
             raise ParserError(f"OCR fallback failed: {exc}") from exc
-        return ParseResult(text=ocr_text, method="ocr", page_count=ocr_pages)
+        return ParseResult(text=clean_text(ocr_text), method="ocr", page_count=ocr_pages)

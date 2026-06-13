@@ -4,8 +4,32 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.pipeline.extraction import ExtractionChain, LLMExtraction
+from pydantic import BaseModel
+
+from app.pipeline.extraction import (
+    ExtractionChain,
+    LLMExtraction,
+    _coerce,
+    build_output_model,
+)
 from app.pipeline.prompts import build_extraction_prompt
+
+
+def test_build_output_model_constrains_schema_fields() -> None:
+    model_cls = build_output_model(
+        {"properties": {"full_name": {"type": "string"}, "email": {"type": "string"}}}
+    )
+    instance = model_cls(fields={"full_name": "Jane", "email": "j@x.io"}, confidence=0.8)
+    assert instance.fields.full_name == "Jane"  # type: ignore[attr-defined]
+
+    coerced = _coerce(instance)
+    assert coerced.fields == {"full_name": "Jane", "email": "j@x.io"}
+    assert coerced.confidence == 0.8
+
+
+def test_coerce_drops_null_and_empty_fields() -> None:
+    out = _coerce({"fields": {"a": "1", "b": None, "c": ""}, "confidence": 0.5})
+    assert out.fields == {"a": "1"}
 
 
 class _FakeStructured:
@@ -57,7 +81,8 @@ async def test_chain_returns_structured_extraction() -> None:
     )
     assert result.fields == {"total": "42.00"}
     assert result.confidence == 0.9
-    assert model.seen_schema is LLMExtraction
+    # The chain now passes a dynamic per-schema output model, not the fixed envelope.
+    assert isinstance(model.seen_schema, type) and issubclass(model.seen_schema, BaseModel)
 
 
 async def test_chain_coerces_dict_result() -> None:

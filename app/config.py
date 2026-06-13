@@ -79,8 +79,19 @@ class Settings(BaseSettings):
     embedding_dim: int = 1536
 
     # --- LLM ---
+    # Providers: "anthropic" | "openai" | "ollama". Primary is the extraction
+    # model; fallback is used when the primary trips the circuit breaker.
+    llm_provider: str = "anthropic"
     llm_primary_model: str = "claude-sonnet-4-6"
+    llm_fallback_provider: str = "openai"
     llm_fallback_model: str = "gpt-4o"
+    # Ollama host. Inside Docker use http://host.docker.internal:11434 to reach an
+    # Ollama running on the host, or the server's IP for a remote instance.
+    ollama_base_url: str = "http://localhost:11434"
+
+    # --- Embeddings (RAG) ---
+    embedding_provider: str = "openai"  # "openai" | "ollama"
+    ollama_embedding_model: str = "nomic-embed-text"
 
     # --- PII encryption ---
     pii_encryption_key: SecretStr | None = None

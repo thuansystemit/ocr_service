@@ -129,17 +129,24 @@ async def score_node(state: ExtractionState) -> ExtractionState:
 
     extracted = state.get("extracted_json", {})
     required = state.get("required_fields", [])
-    low_conf = state.get("low_confidence_fields", [])
-
-    completeness = conf_mod.completeness_score(extracted, required)
-    llm_self = state.get("llm_confidence", 0.0)
-    # Semantic proxy: penalise fields the model itself flagged as low-confidence.
-    field_count = max(len(extracted), 1)
-    semantic = max(0.0, 1.0 - len(low_conf) / field_count)
+    json_schema = state.get("json_schema", {}) or {}
     mult = state.get("guardrail_multiplier", 1.0)
 
+    completeness = conf_mod.completeness_score(extracted, required)
+    # Fill rate: how much of the schema the model actually populated. Used as the
+    # "semantic" signal -- a structural, provider-independent quality measure.
+    total_props = len(json_schema.get("properties", {})) or max(len(extracted), 1)
+    fill_rate = min(1.0, len(extracted) / total_props)
+    # LLM self-report is unreliable across providers (small local models often
+    # omit it), so fall back to the structural signals when it is absent.
+    llm_self = state.get("llm_confidence", 0.0)
+    llm_signal = llm_self if llm_self > 0 else min(completeness, fill_rate)
+
     breakdown = conf_mod.score(
-        llm_self=llm_self, completeness=completeness, semantic=semantic, guardrail_multiplier=mult
+        llm_self=llm_signal,
+        completeness=completeness,
+        semantic=fill_rate,
+        guardrail_multiplier=mult,
     )
     return {
         "confidence": breakdown.guardrail_adjusted,

@@ -19,6 +19,17 @@ class ParseResult:
         return len(self.text.replace("\n", "").strip()) < 10
 
 
+def clean_text(text: str) -> str:
+    """Strip characters that downstream stores reject.
+
+    PostgreSQL ``text``/``jsonb`` cannot represent the NUL byte (``\\u0000``), and
+    some PDFs yield NUL bytes from pdfplumber. Since parsed text flows into the
+    LangGraph state (checkpointed to Postgres JSONB) and the document record,
+    every parser must scrub it here.
+    """
+    return text.replace("\x00", "")
+
+
 class ParserError(RuntimeError):
     """Raised when a document cannot be parsed by any available method."""
 

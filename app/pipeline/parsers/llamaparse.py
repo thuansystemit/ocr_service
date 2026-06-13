@@ -18,7 +18,7 @@ import httpx
 
 from app.config import get_settings
 from app.observability.logging import get_logger
-from app.pipeline.parsers.base import ParseResult
+from app.pipeline.parsers.base import ParseResult, clean_text
 from app.pipeline.parsers.local import LocalParser
 
 log = get_logger(__name__)
@@ -47,6 +47,7 @@ class LlamaParseClient:
                 text = await self._call_cloud(
                     content, mime_type, settings.llama_cloud_api_key.get_secret_value()
                 )
+                text = clean_text(text)
                 return ParseResult(text=text, method="llamaparse", page_count=text.count("\f") + 1)
             except (httpx.TimeoutException, _CloudServerError) as exc:
                 log.warning("parser.llamaparse.retry", attempt=attempt, error=str(exc))
